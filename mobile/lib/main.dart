@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:camera/camera.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 
 String _computeDefaultApiBaseUrl() {
   if (kIsWeb) {
@@ -48,6 +50,8 @@ class RadiobuddyApi {
 
   final String baseUrl;
 
+  static const _uuid = Uuid();
+
   Future<Map<String, Object?>> getJson(String path) async {
     final uri = Uri.parse(baseUrl).resolve(path);
     final response = await http.get(uri, headers: {'accept': 'application/json'});
@@ -71,6 +75,61 @@ class RadiobuddyApi {
   Future<Map<String, Object?>> fetchChestPaExposureProtocol() {
     return getJson('/exposure-protocols/chest-pa');
   }
+
+  Future<void> postTelemetryEvent({
+    required String eventType,
+    required String procedureId,
+    String? procedureVersion,
+    String? sessionId,
+    String? stageId,
+    Map<String, Object?>? prompt,
+    Map<String, num>? metrics,
+  }) async {
+    final uri = Uri.parse(baseUrl).resolve('/telemetry/events');
+    final now = DateTime.now().toUtc().toIso8601String();
+
+    final Map<String, Object?> payload = {
+      'schema_version': 'v1',
+      'event_id': _uuid.v4(),
+      'timestamp': now,
+      'event_type': eventType,
+      'procedure_id': procedureId,
+    };
+
+    if (procedureVersion != null) {
+      payload['procedure_version'] = procedureVersion;
+    }
+    if (sessionId != null) {
+      payload['session_id'] = sessionId;
+    }
+    if (stageId != null) {
+      payload['stage_id'] = stageId;
+    }
+
+    payload['device'] = {
+      'platform': defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android',
+    };
+
+    if (prompt != null) {
+      payload['prompt'] = prompt;
+    }
+    if (metrics != null) {
+      payload['metrics'] = metrics;
+    }
+
+    final response = await http.post(
+      uri,
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+      },
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+  }
 }
 
 class ChestPaGuidanceScreen extends StatefulWidget {
@@ -83,6 +142,8 @@ class ChestPaGuidanceScreen extends StatefulWidget {
 class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   final _tts = FlutterTts();
 
+  final _uuid = const Uuid();
+
   GuidanceStatus _status = GuidanceStatus.idle;
   String _statusText = 'Idle';
   int _stepIndex = 0;
@@ -94,6 +155,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   Map<String, Object?>? _exposureProtocol;
 
   late final RadiobuddyApi _api;
+
+  String? _sessionId;
 
   final List<String> _steps = const [
     'Confirm patient is erect and centered.',
@@ -138,8 +201,22 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         _procedureRules = rules;
         _exposureProtocol = protocol;
       });
+      unawaited(
+        _api.postTelemetryEvent(
+          eventType: 'ready_state_entered',
+          procedureId: 'chest_pa',
+          stageId: 'configs_loaded',
+        ).catchError((_) {}),
+      );
       await _setStatus(_status, 'Configs loaded');
     } catch (e) {
+      unawaited(
+        _api.postTelemetryEvent(
+          eventType: 'vision_low_confidence',
+          procedureId: 'chest_pa',
+          stageId: 'config_load_failed',
+        ).catchError((_) {}),
+      );
       await _setStatus(GuidanceStatus.error, 'Config load failed');
     }
   }
@@ -166,6 +243,13 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         _camera = controller;
         _cameraReady = true;
       });
+      unawaited(
+        _api.postTelemetryEvent(
+          eventType: 'ready_state_entered',
+          procedureId: 'chest_pa',
+          stageId: 'camera_ready',
+        ).catchError((_) {}),
+      );
       await _setStatus(GuidanceStatus.ready, 'Camera ready');
     } catch (e) {
       await _setStatus(GuidanceStatus.error, 'Camera init failed: $e');
@@ -173,28 +257,84 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   }
 
   Future<void> _startGuidance() async {
+    final sessionId = _uuid.v4();
+    _sessionId = sessionId;
     _stepIndex = 0;
     await _setStatus(GuidanceStatus.running, 'Guidance running');
+    unawaited(
+      _api.postTelemetryEvent(
+        eventType: 'session_start',
+        procedureId: 'chest_pa',
+        sessionId: sessionId,
+        stageId: 'start',
+      ).catchError((_) {}),
+    );
     await _speak(_steps[_stepIndex]);
+    unawaited(
+      _api.postTelemetryEvent(
+        eventType: 'prompt_emitted',
+        procedureId: 'chest_pa',
+        sessionId: sessionId,
+        stageId: 'step_1',
+        prompt: {
+          'prompt_id': 'step_1',
+          'spoken': true,
+        },
+      ).catchError((_) {}),
+    );
   }
 
   Future<void> _nextStep() async {
     if (_status != GuidanceStatus.running) {
       return;
     }
+
+    final sessionId = _sessionId;
     if (_stepIndex >= _steps.length - 1) {
       await _setStatus(GuidanceStatus.ready, 'Guidance complete');
       await _speak('Guidance complete');
+      unawaited(
+        _api.postTelemetryEvent(
+          eventType: 'session_end',
+          procedureId: 'chest_pa',
+          sessionId: sessionId,
+          stageId: 'complete',
+        ).catchError((_) {}),
+      );
+      _sessionId = null;
       return;
     }
     _stepIndex += 1;
     setState(() {});
     await _speak(_steps[_stepIndex]);
+
+    unawaited(
+      _api.postTelemetryEvent(
+        eventType: 'prompt_emitted',
+        procedureId: 'chest_pa',
+        sessionId: sessionId,
+        stageId: 'step_${_stepIndex + 1}',
+        prompt: {
+          'prompt_id': 'step_${_stepIndex + 1}',
+          'spoken': true,
+        },
+      ).catchError((_) {}),
+    );
   }
 
   Future<void> _stopGuidance() async {
     await _tts.stop();
     await _setStatus(GuidanceStatus.ready, 'Stopped');
+    final sessionId = _sessionId;
+    unawaited(
+      _api.postTelemetryEvent(
+        eventType: 'session_end',
+        procedureId: 'chest_pa',
+        sessionId: sessionId,
+        stageId: 'stopped',
+      ).catchError((_) {}),
+    );
+    _sessionId = null;
   }
 
   @override
