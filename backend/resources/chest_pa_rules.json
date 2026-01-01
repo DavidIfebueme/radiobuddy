@@ -1,0 +1,260 @@
+{
+  "schema_version": "v1",
+  "procedure_id": "chest_pa_erect",
+  "procedure_name": "Chest PA (Erect)",
+  "procedure_version": "v0.1",
+  "model_requirements": {
+    "pose": { "required": true, "min_confidence": 0.55 },
+    "segmentation": { "required": false, "min_confidence": 0.6 },
+    "fiducials": { "required": false, "type": "apriltag" }
+  },
+  "stages": [
+    {
+      "stage_id": "acquire_view",
+      "stage_name": "Acquire View",
+      "description": "Only camera/framing prompts until pose confidence is stable.",
+      "speech_policy": { "min_interval_ms": 2500, "repeat_if_stalled_ms": 6000 }
+    },
+    {
+      "stage_id": "coarse",
+      "stage_name": "Coarse Coaching",
+      "description": "Fix biggest positioning issues first.",
+      "speech_policy": { "min_interval_ms": 2500, "repeat_if_stalled_ms": 6000 }
+    },
+    {
+      "stage_id": "fine",
+      "stage_name": "Fine Coaching",
+      "description": "Micro-adjustments with tight thresholds.",
+      "speech_policy": { "min_interval_ms": 3000, "repeat_if_stalled_ms": 8000 }
+    },
+    {
+      "stage_id": "ready",
+      "stage_name": "Ready Lock",
+      "description": "Hold-still confirmation and technique suggestion.",
+      "speech_policy": { "min_interval_ms": 4000, "repeat_if_stalled_ms": 0 }
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "pose_confidence",
+      "display_name": "Pose confidence",
+      "description": "Overall pose detector confidence.",
+      "units": "probability",
+      "range": { "min": 0, "max": 1 }
+    },
+    {
+      "metric_id": "framing_score",
+      "display_name": "Framing score",
+      "description": "Higher is better; based on patient fully in-frame and centered.",
+      "units": "score",
+      "range": { "min": 0, "max": 1 }
+    },
+    {
+      "metric_id": "motion_score",
+      "display_name": "Motion score",
+      "description": "Higher means more movement; used to avoid coaching while turning.",
+      "units": "score",
+      "range": { "min": 0, "max": 1 }
+    },
+    {
+      "metric_id": "rotation_risk",
+      "display_name": "Rotation risk",
+      "description": "Higher means likely patient rotation/obliquity.",
+      "units": "score",
+      "range": { "min": 0, "max": 1 }
+    },
+    {
+      "metric_id": "tilt_risk",
+      "display_name": "Lateral tilt risk",
+      "description": "Higher means likely lateral tilt.",
+      "units": "score",
+      "range": { "min": 0, "max": 1 }
+    },
+    {
+      "metric_id": "chin_risk",
+      "display_name": "Chin-down risk",
+      "description": "Higher means chin may superimpose apices.",
+      "units": "score",
+      "range": { "min": 0, "max": 1 }
+    },
+    {
+      "metric_id": "scapula_risk",
+      "display_name": "Scapula-in-field risk",
+      "description": "Higher means shoulders may not be rolled forward.",
+      "units": "score",
+      "range": { "min": 0, "max": 1 }
+    }
+  ],
+  "prompts": [
+    {
+      "prompt_id": "improve_view_step_back",
+      "text": "Step back so the full torso is in view.",
+      "tts": "Step back so I can see the full torso.",
+      "severity": "info",
+      "cooldown_ms": 3000,
+      "min_persist_ms": 700
+    },
+    {
+      "prompt_id": "improve_view_center",
+      "text": "Center the patient in the frame.",
+      "tts": "Center the patient in the frame.",
+      "severity": "info",
+      "cooldown_ms": 3000,
+      "min_persist_ms": 700
+    },
+    {
+      "prompt_id": "wait_patient_still",
+      "text": "Wait for the patient to hold still.",
+      "tts": "Hold still for a moment.",
+      "severity": "info",
+      "cooldown_ms": 2500,
+      "min_persist_ms": 600
+    },
+    {
+      "prompt_id": "reduce_rotation_left",
+      "text": "Reduce rotation: rotate the patient slightly left.",
+      "tts": "Rotate the patient slightly left.",
+      "severity": "warning",
+      "cooldown_ms": 3000,
+      "min_persist_ms": 900
+    },
+    {
+      "prompt_id": "reduce_rotation_right",
+      "text": "Reduce rotation: rotate the patient slightly right.",
+      "tts": "Rotate the patient slightly right.",
+      "severity": "warning",
+      "cooldown_ms": 3000,
+      "min_persist_ms": 900
+    },
+    {
+      "prompt_id": "reduce_tilt",
+      "text": "Straighten up: reduce lateral tilt.",
+      "tts": "Straighten up. Reduce lateral tilt.",
+      "severity": "warning",
+      "cooldown_ms": 3000,
+      "min_persist_ms": 900
+    },
+    {
+      "prompt_id": "chin_up",
+      "text": "Lift the chin slightly.",
+      "tts": "Lift the chin slightly.",
+      "severity": "info",
+      "cooldown_ms": 3500,
+      "min_persist_ms": 900
+    },
+    {
+      "prompt_id": "roll_shoulders_forward",
+      "text": "Roll the shoulders forward.",
+      "tts": "Roll the shoulders forward.",
+      "severity": "info",
+      "cooldown_ms": 3500,
+      "min_persist_ms": 900
+    },
+    {
+      "prompt_id": "ready_hold_still",
+      "text": "Positioning looks good. Hold still.",
+      "tts": "Positioning looks good. Hold still.",
+      "severity": "info",
+      "cooldown_ms": 5000,
+      "min_persist_ms": 1200
+    }
+  ],
+  "rules": [
+    {
+      "rule_id": "acquire_low_pose_conf",
+      "stage_ids": ["acquire_view"],
+      "priority": 100,
+      "when": {
+        "all": [{ "metric": "pose_confidence", "op": "lt", "value": 0.55 }]
+      },
+      "then": { "prompt_id": "improve_view_step_back", "tag": "acquire_view" }
+    },
+    {
+      "rule_id": "acquire_bad_framing",
+      "stage_ids": ["acquire_view"],
+      "priority": 90,
+      "when": {
+        "all": [
+          { "metric": "pose_confidence", "op": "gte", "value": 0.55 },
+          { "metric": "framing_score", "op": "lt", "value": 0.6 }
+        ]
+      },
+      "then": { "prompt_id": "improve_view_center", "tag": "acquire_view" }
+    },
+    {
+      "rule_id": "avoid_coaching_during_motion",
+      "stage_ids": ["coarse", "fine"],
+      "priority": 100,
+      "when": { "all": [{ "metric": "motion_score", "op": "gt", "value": 0.55 }] },
+      "then": { "prompt_id": "wait_patient_still", "tag": "motion" }
+    },
+    {
+      "rule_id": "coarse_rotation_left",
+      "stage_ids": ["coarse"],
+      "priority": 80,
+      "when": {
+        "all": [
+          { "metric": "motion_score", "op": "lte", "value": 0.55 },
+          { "metric": "rotation_risk", "op": "gt", "value": 0.6 }
+        ]
+      },
+      "then": { "prompt_id": "reduce_rotation_left", "tag": "rotation" }
+    },
+    {
+      "rule_id": "coarse_tilt",
+      "stage_ids": ["coarse"],
+      "priority": 70,
+      "when": {
+        "all": [
+          { "metric": "motion_score", "op": "lte", "value": 0.55 },
+          { "metric": "tilt_risk", "op": "gt", "value": 0.6 }
+        ]
+      },
+      "then": { "prompt_id": "reduce_tilt", "tag": "tilt" }
+    },
+    {
+      "rule_id": "coarse_chin",
+      "stage_ids": ["coarse"],
+      "priority": 60,
+      "when": {
+        "all": [
+          { "metric": "motion_score", "op": "lte", "value": 0.55 },
+          { "metric": "chin_risk", "op": "gt", "value": 0.6 }
+        ]
+      },
+      "then": { "prompt_id": "chin_up", "tag": "chin" }
+    },
+    {
+      "rule_id": "coarse_scapula",
+      "stage_ids": ["coarse"],
+      "priority": 50,
+      "when": {
+        "all": [
+          { "metric": "motion_score", "op": "lte", "value": 0.55 },
+          { "metric": "scapula_risk", "op": "gt", "value": 0.6 }
+        ]
+      },
+      "then": { "prompt_id": "roll_shoulders_forward", "tag": "shoulders" }
+    },
+    {
+      "rule_id": "ready_when_all_good",
+      "stage_ids": ["fine", "ready"],
+      "priority": 10,
+      "when": {
+        "all": [
+          { "metric": "pose_confidence", "op": "gte", "value": 0.65 },
+          { "metric": "motion_score", "op": "lte", "value": 0.35 },
+          { "metric": "rotation_risk", "op": "lte", "value": 0.25 },
+          { "metric": "tilt_risk", "op": "lte", "value": 0.25 },
+          { "metric": "chin_risk", "op": "lte", "value": 0.25 },
+          { "metric": "scapula_risk", "op": "lte", "value": 0.35 }
+        ]
+      },
+      "then": {
+        "prompt_id": "ready_hold_still",
+        "tag": "ready",
+        "is_ready_signal": true
+      }
+    }
+  ]
+}

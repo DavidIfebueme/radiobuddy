@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://radiobuddy.local/schemas/telemetry_event.schema.json",
+  "title": "Radio Buddy Telemetry Event (Non-PHI)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "timestamp",
+    "event_type",
+    "procedure_id"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^v\\d+$" },
+    "event_id": {
+      "type": "string",
+      "description": "UUID v4 preferred.",
+      "pattern": "^[0-9a-fA-F-]{36}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "RFC3339 timestamp.",
+      "format": "date-time"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "session_start",
+        "session_end",
+        "prompt_emitted",
+        "ready_state_entered",
+        "habitus_estimated",
+        "habitus_overridden",
+        "exposure_suggested",
+        "vision_low_confidence"
+      ]
+    },
+    "procedure_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "procedure_version": { "type": "string" },
+    "session_id": {
+      "type": "string",
+      "description": "Client-generated UUID for grouping events.",
+      "pattern": "^[0-9a-fA-F-]{36}$"
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "platform": { "type": "string", "enum": ["android", "ios"] },
+        "model": { "type": "string" },
+        "app_version": { "type": "string" }
+      }
+    },
+    "stage_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "metrics": {
+      "type": "object",
+      "description": "Snapshot of a small, non-identifying set of numeric metrics.",
+      "additionalProperties": { "type": "number" }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prompt_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "rule_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "spoken": { "type": "boolean" }
+      }
+    },
+    "habitus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size_class_estimated": { "type": "string", "enum": ["small", "average", "large"] },
+        "size_class_final": { "type": "string", "enum": ["small", "average", "large"] },
+        "height_cm": { "type": "number", "minimum": 30, "maximum": 250 },
+        "weight_kg": { "type": "number", "minimum": 1, "maximum": 400 },
+        "source": { "type": "string", "enum": ["camera_estimate", "manual"] }
+      }
+    },
+    "exposure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kvp": { "type": "number" },
+        "mas": { "type": "number" },
+        "protocol_id": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frame_latency_ms": { "type": "number", "minimum": 0 },
+        "fps": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "schema_version": "v1",
+  "site_id": "demo_site",
+  "room_id": "room_1",
+  "protocol_id": "demo_chest_pa_protocol",
+  "protocol_name": "Chest PA (Erect) — Demo Protocol",
+  "protocol_version": "v0.1",
+  "procedure_id": "chest_pa_erect",
+  "assumptions": [
+    "These values are placeholders. Replace with site-approved technique charts.",
+    "Always follow local protocol and radiologist/radiographer guidance."
+  ],
+  "recommendations": [
+    {
+      "inputs": {
+        "projection": "chest_pa_erect",
+        "size_class": "small",
+        "grid": true,
+        "sid_cm": 180,
+        "detector": "dr"
+      },
+      "output": {
+        "kvp": 110,
+        "mas": 1.2,
+        "notes": "Starting point only; adjust per site protocol."
+      }
+    },
+    {
+      "inputs": {
+        "projection": "chest_pa_erect",
+        "size_class": "average",
+        "grid": true,
+        "sid_cm": 180,
+        "detector": "dr"
+      },
+      "output": {
+        "kvp": 120,
+        "mas": 1.6,
+        "notes": "Starting point only; adjust per site protocol."
+      }
+    },
+    {
+      "inputs": {
+        "projection": "chest_pa_erect",
+        "size_class": "large",
+        "grid": true,
+        "sid_cm": 180,
+        "detector": "dr"
+      },
+      "output": {
+        "kvp": 125,
+        "mas": 2.2,
+        "notes": "Starting point only; adjust per site protocol."
+      }
+    }
+  ]
+}

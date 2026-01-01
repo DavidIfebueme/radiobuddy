@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://radiobuddy.local/schemas/exposure_protocol.schema.json",
+  "title": "Radio Buddy Exposure Protocol Table",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "site_id",
+    "room_id",
+    "protocol_id",
+    "protocol_name",
+    "procedure_id",
+    "recommendations"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^v\\d+$" },
+    "site_id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "room_id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "protocol_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "protocol_name": { "type": "string" },
+    "protocol_version": { "type": "string" },
+    "procedure_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "assumptions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "recommendations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/recommendation" }
+    }
+  },
+  "$defs": {
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "output"],
+      "properties": {
+        "inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["projection", "size_class"],
+          "properties": {
+            "projection": { "type": "string", "enum": ["chest_pa_erect"] },
+            "size_class": { "type": "string", "enum": ["small", "average", "large"] },
+            "grid": { "type": "boolean" },
+            "sid_cm": { "type": "integer", "minimum": 50, "maximum": 300 },
+            "detector": {
+              "type": "string",
+              "enum": ["dr", "cr", "film"]
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kvp", "mas"],
+          "properties": {
+            "kvp": {
+              "type": "number",
+              "minimum": 40,
+              "maximum": 150
+            },
+            "mas": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 100
+            },
+            "notes": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

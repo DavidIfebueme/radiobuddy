@@ -1,0 +1,36 @@
+{
+  "schema_version": "v1",
+  "event_id": "0f3f6f86-8f64-4ff4-9bf0-2df3a8d3e6a5",
+  "timestamp": "2026-01-01T12:00:00Z",
+  "event_type": "prompt_emitted",
+  "procedure_id": "chest_pa_erect",
+  "procedure_version": "v0.1",
+  "session_id": "7eae0d8c-5f0b-4bcb-9ed4-8b0cf5d46df1",
+  "device": {
+    "platform": "android",
+    "model": "Pixel 7",
+    "app_version": "0.1.0"
+  },
+  "stage_id": "coarse",
+  "metrics": {
+    "pose_confidence": 0.74,
+    "framing_score": 0.88,
+    "motion_score": 0.22,
+    "rotation_risk": 0.71,
+    "tilt_risk": 0.12
+  },
+  "prompt": {
+    "prompt_id": "reduce_rotation_left",
+    "rule_id": "coarse_rotation_left",
+    "spoken": true
+  },
+  "habitus": {
+    "size_class_estimated": "average",
+    "size_class_final": "average",
+    "source": "camera_estimate"
+  },
+  "performance": {
+    "frame_latency_ms": 48.5,
+    "fps": 18.2
+  }
+}

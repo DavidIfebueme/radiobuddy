@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://radiobuddy.local/schemas/procedure_rules.schema.json",
+  "title": "Radio Buddy Procedure Rules",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "procedure_id",
+    "procedure_name",
+    "stages",
+    "metrics",
+    "prompts",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Version of this JSON payload format (not the clinical protocol version).",
+      "pattern": "^v\\d+$"
+    },
+    "procedure_id": {
+      "type": "string",
+      "description": "Stable identifier used in app/backend and telemetry.",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "procedure_name": {
+      "type": "string"
+    },
+    "procedure_version": {
+      "type": "string",
+      "description": "Clinical/protocol version label for this procedure ruleset (freeform)."
+    },
+    "model_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": { "type": "boolean" },
+            "min_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "segmentation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": { "type": "boolean" },
+            "min_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "fiducials": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": { "type": "boolean" },
+            "type": { "type": "string", "enum": ["apriltag", "aruco"] }
+          }
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage_id", "stage_name"],
+        "properties": {
+          "stage_id": {
+            "type": "string",
+            "description": "Stable stage identifier.",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "stage_name": { "type": "string" },
+          "description": { "type": "string" },
+          "speech_policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "min_interval_ms": { "type": "integer", "minimum": 0 },
+              "repeat_if_stalled_ms": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric_id", "display_name", "range"],
+        "properties": {
+          "metric_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "display_name": { "type": "string" },
+          "description": { "type": "string" },
+          "units": { "type": "string" },
+          "range": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["min", "max"],
+            "properties": {
+              "min": { "type": "number" },
+              "max": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "prompts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["prompt_id", "text"],
+        "properties": {
+          "prompt_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "text": { "type": "string", "description": "UI text." },
+          "tts": { "type": "string", "description": "Optional TTS text. If omitted, use text." },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "warning", "critical"]
+          },
+          "cooldown_ms": { "type": "integer", "minimum": 0 },
+          "min_persist_ms": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "op", "value"],
+      "properties": {
+        "metric": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "op": {
+          "type": "string",
+          "enum": ["lt", "lte", "gt", "gte", "eq", "neq"]
+        },
+        "value": { "type": ["number", "string", "boolean"] }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/predicate" }
+        },
+        "any": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/predicate" }
+        },
+        "not": { "$ref": "#/$defs/predicate" }
+      },
+      "oneOf": [
+        { "required": ["all"] },
+        { "required": ["any"] },
+        { "required": ["not"] }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "priority", "when", "then"],
+      "properties": {
+        "rule_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "stage_ids": {
+          "type": "array",
+          "description": "If omitted, rule applies to all stages.",
+          "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Higher means more important; only the top active rule should be spoken.",
+          "minimum": 0
+        },
+        "when": { "$ref": "#/$defs/condition" },
+        "then": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["prompt_id"],
+          "properties": {
+            "prompt_id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+            "tag": {
+              "type": "string",
+              "description": "Optional tag for grouping prompts (e.g., acquire_view, rotation, ready)."
+            },
+            "is_ready_signal": {
+              "type": "boolean",
+              "description": "If true, indicates the user is in a stable 'ready' state."
+            }
+          }
+        }
+      }
+    }
+  }
+}
