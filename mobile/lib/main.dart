@@ -1,11 +1,22 @@
 import 'dart:convert';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 
-const _defaultApiBaseUrl = 'http://10.0.2.2:8000';
+String _computeDefaultApiBaseUrl() {
+  if (kIsWeb) {
+    return 'http://127.0.0.1:8000';
+  }
+
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    return 'http://10.0.2.2:8000';
+  }
+
+  return 'http://127.0.0.1:8000';
+}
 
 void main() {
   runApp(const RadioBuddyApp());
@@ -95,8 +106,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   @override
   void initState() {
     super.initState();
-    final baseUrl = const String.fromEnvironment('API_BASE_URL', defaultValue: _defaultApiBaseUrl);
-    _api = RadiobuddyApi(baseUrl: baseUrl);
+    final baseUrl = const String.fromEnvironment('API_BASE_URL', defaultValue: '');
+    _api = RadiobuddyApi(baseUrl: baseUrl.trim().isEmpty ? _computeDefaultApiBaseUrl() : baseUrl);
   }
 
   @override
@@ -134,6 +145,14 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   }
 
   Future<void> _initCamera() async {
+    if (kIsWeb || (defaultTargetPlatform != TargetPlatform.android && defaultTargetPlatform != TargetPlatform.iOS)) {
+      await _setStatus(
+        GuidanceStatus.error,
+        'Camera not supported on this platform',
+      );
+      return;
+    }
+
     await _setStatus(GuidanceStatus.loadingCamera, 'Initializing camera');
     try {
       final cameras = await availableCameras();
@@ -149,7 +168,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       });
       await _setStatus(GuidanceStatus.ready, 'Camera ready');
     } catch (e) {
-      await _setStatus(GuidanceStatus.error, 'Camera init failed');
+      await _setStatus(GuidanceStatus.error, 'Camera init failed: $e');
     }
   }
 
