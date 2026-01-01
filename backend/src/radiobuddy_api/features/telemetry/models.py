@@ -16,7 +16,7 @@ class TelemetryEvent(Base):
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     timestamp: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    schema_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     procedure_id: Mapped[str] = mapped_column(String(128), nullable=False)
 

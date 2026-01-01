@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 TelemetryEventType = Literal[
     "session_start",
@@ -50,7 +50,29 @@ class TelemetryPerformance(BaseModel):
 
 
 class TelemetryEventIn(BaseModel):
-    schema_version: str = Field(..., pattern=r"^v\d+$")
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "schema_version": "v1",
+                    "event_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "timestamp": "2026-01-01T22:25:30.509Z",
+                    "event_type": "session_start",
+                    "procedure_id": "chest_pa",
+                    "procedure_version": "v1",
+                    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "stage_id": "setup",
+                    "device": {"platform": "android", "model": "Pixel 8", "app_version": "0.1.0"},
+                    "metrics": {"confidence": 0.9},
+                    "performance": {"frame_latency_ms": 22.0, "fps": 30.0},
+                }
+            ]
+        }
+    )
+
+    schema_version: str = Field(
+        ..., pattern=r"^v\d+$", max_length=64, json_schema_extra={"examples": ["v1"]}
+    )
     event_id: UUID
     timestamp: datetime
     event_type: TelemetryEventType
@@ -76,3 +98,4 @@ class TelemetryEventAccepted(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     detail: Any | None = None
+    request_id: str | None = None
