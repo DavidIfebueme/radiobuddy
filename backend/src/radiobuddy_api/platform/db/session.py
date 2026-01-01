@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -10,9 +11,9 @@ from radiobuddy_api.platform.config import settings
 
 def _require_database_url() -> str:
     if not settings.database_url:
-        raise RuntimeError(
-            "RADIOBUDDY_DATABASE_URL is not set. "
-            "Set it to something like: postgresql+psycopg://user:pass@localhost:5432/radiobuddy"
+        raise HTTPException(
+            status_code=503,
+            detail="RADIOBUDDY_DATABASE_URL is not set",
         )
     return settings.database_url
 

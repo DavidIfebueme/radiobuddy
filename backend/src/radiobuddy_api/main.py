@@ -7,6 +7,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from radiobuddy_api.features.exposure_protocols.router import router as exposure_protocols_router
 from radiobuddy_api.features.health.router import router as health_router
 from radiobuddy_api.features.procedure_rules.router import router as procedure_rules_router
+from radiobuddy_api.features.site_presets.router import router as site_presets_router
 from radiobuddy_api.features.telemetry.router import router as telemetry_router
 from radiobuddy_api.platform.config import settings
 from radiobuddy_api.platform.error_handlers import (
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(procedure_rules_router)
     app.include_router(exposure_protocols_router)
     app.include_router(telemetry_router)
+    app.include_router(site_presets_router)
 
     return app
 
