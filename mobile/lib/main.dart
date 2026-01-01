@@ -144,6 +144,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
 
   final _uuid = const Uuid();
 
+  late final bool _ttsSupported;
+
   GuidanceStatus _status = GuidanceStatus.idle;
   String _statusText = 'Idle';
   int _stepIndex = 0;
@@ -171,12 +173,20 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     super.initState();
     final baseUrl = const String.fromEnvironment('API_BASE_URL', defaultValue: '');
     _api = RadiobuddyApi(baseUrl: baseUrl.trim().isEmpty ? _computeDefaultApiBaseUrl() : baseUrl);
+
+    _ttsSupported = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.windows);
   }
 
   @override
   void dispose() {
     _camera?.dispose();
-    _tts.stop();
+    if (_ttsSupported) {
+      _tts.stop().catchError((_) {});
+    }
     super.dispose();
   }
 
@@ -188,8 +198,13 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   }
 
   Future<void> _speak(String text) async {
-    await _tts.stop();
-    await _tts.speak(text);
+    if (!_ttsSupported) {
+      return;
+    }
+    try {
+      await _tts.stop();
+      await _tts.speak(text);
+    } catch (_) {}
   }
 
   Future<void> _loadConfigs() async {
@@ -323,7 +338,11 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   }
 
   Future<void> _stopGuidance() async {
-    await _tts.stop();
+    if (_ttsSupported) {
+      try {
+        await _tts.stop();
+      } catch (_) {}
+    }
     await _setStatus(GuidanceStatus.ready, 'Stopped');
     final sessionId = _sessionId;
     unawaited(
