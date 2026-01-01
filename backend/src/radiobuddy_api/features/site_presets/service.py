@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from radiobuddy_api.features.site_presets.models import Room, RoomExposureProtocol, Site
 from radiobuddy_api.features.site_presets.schemas import ExposureProtocolPayload
+from radiobuddy_api.platform.json_schema import validate_instance
 
 
 def create_site(db: Session, site_id: str, name: str | None) -> Site:
@@ -46,6 +47,8 @@ def upsert_room_exposure_protocol(
     payload_dict["site_id"] = site_id
     payload_dict["room_id"] = room_id
     payload_dict["procedure_id"] = procedure_id
+
+    validate_instance("exposure_protocol.schema.json", payload_dict)
 
     stmt = insert(RoomExposureProtocol).values(
         site_id=site_id,

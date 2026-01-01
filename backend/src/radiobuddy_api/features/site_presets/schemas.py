@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SiteCreate(BaseModel):
-    site_id: str = Field(..., min_length=1, max_length=64)
+    site_id: str = Field(..., pattern=r"^[a-z0-9_-]+$", min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=200)
 
 
@@ -18,7 +18,7 @@ class SiteOut(BaseModel):
 
 
 class RoomCreate(BaseModel):
-    room_id: str = Field(..., min_length=1, max_length=64)
+    room_id: str = Field(..., pattern=r"^[a-z0-9_-]+$", min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=200)
 
 
@@ -38,10 +38,10 @@ class ExposureProtocolPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     schema_version: str = Field(..., pattern=r"^v\d+$", max_length=64)
-    protocol_id: str = Field(..., min_length=1, max_length=128)
+    protocol_id: str = Field(..., pattern=r"^[a-z0-9_]+$", min_length=1, max_length=128)
     protocol_name: str = Field(..., min_length=1, max_length=200)
     protocol_version: str = Field(..., min_length=1, max_length=64)
-    procedure_id: str = Field(..., min_length=1, max_length=128)
+    procedure_id: str = Field(..., pattern=r"^[a-z0-9_]+$", min_length=1, max_length=128)
 
     assumptions: list[str] = Field(default_factory=list)
     recommendations: list[ExposureProtocolRecommendation] = Field(default_factory=list)

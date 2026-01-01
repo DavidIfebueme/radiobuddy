@@ -12,9 +12,11 @@ from radiobuddy_api.features.telemetry.router import router as telemetry_router
 from radiobuddy_api.platform.config import settings
 from radiobuddy_api.platform.error_handlers import (
     http_exception_handler,
+    schema_validation_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from radiobuddy_api.platform.json_schema import SchemaValidationError
 from radiobuddy_api.platform.logging import configure_logging
 from radiobuddy_api.platform.middleware import RequestIdMiddleware
 
@@ -31,6 +33,7 @@ def create_app() -> FastAPI:
 
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(SchemaValidationError, schema_validation_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)

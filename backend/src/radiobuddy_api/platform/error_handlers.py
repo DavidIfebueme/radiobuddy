@@ -7,6 +7,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from radiobuddy_api.platform.json_schema import SchemaValidationError
+
 logger = logging.getLogger("radiobuddy_api.errors")
 
 
@@ -29,6 +31,20 @@ async def validation_exception_handler(
     return JSONResponse(
         status_code=422,
         content={"error": "validation_error", "detail": exc.errors(), "request_id": rid},
+    )
+
+
+async def schema_validation_exception_handler(
+    request: Request, exc: SchemaValidationError
+) -> JSONResponse:
+    rid = _request_id(request)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "validation_error",
+            "detail": {"schema": exc.schema_name, "message": exc.message, "path": exc.json_path},
+            "request_id": rid,
+        },
     )
 
 
