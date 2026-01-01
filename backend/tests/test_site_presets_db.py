@@ -20,8 +20,15 @@ def test_site_room_protocol_roundtrip() -> None:
 
     client = TestClient(app)
 
+    settings.admin_api_key = "test_admin_key"
+    headers = {"x-api-key": settings.admin_api_key}
+
     try:
-        resp = client.post("/sites", json={"site_id": site_id, "name": "Test Site"})
+        resp = client.post(
+            "/sites",
+            json={"site_id": site_id, "name": "Test Site"},
+            headers=headers,
+        )
         assert resp.status_code == 200
         assert resp.headers.get("x-request-id")
         assert resp.json()["site_id"] == site_id
@@ -29,6 +36,7 @@ def test_site_room_protocol_roundtrip() -> None:
         resp = client.post(
             f"/sites/{site_id}/rooms",
             json={"room_id": room_id, "name": "Room 1"},
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["room_id"] == room_id
@@ -57,6 +65,7 @@ def test_site_room_protocol_roundtrip() -> None:
         resp = client.put(
             f"/sites/{site_id}/rooms/{room_id}/exposure-protocols/{procedure_id}",
             json=payload,
+            headers=headers,
         )
         assert resp.status_code == 200
         body = resp.json()

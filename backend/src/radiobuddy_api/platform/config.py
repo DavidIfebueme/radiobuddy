@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     environment: str = "dev"
     log_level: str = "INFO"
     database_url: str | None = None
+    admin_api_key: str | None = None
 
 
 settings = Settings()

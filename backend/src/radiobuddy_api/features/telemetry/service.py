@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from radiobuddy_api.features.telemetry.models import TelemetryEvent
@@ -26,3 +27,11 @@ def store_event(db: Session, event: TelemetryEventIn) -> None:
 
     db.add(row)
     db.commit()
+
+
+def list_events(db: Session, session_id: str | None, limit: int) -> list[TelemetryEvent]:
+    safe_limit = max(1, min(int(limit), 500))
+    stmt = select(TelemetryEvent).order_by(desc(TelemetryEvent.timestamp)).limit(safe_limit)
+    if session_id:
+        stmt = stmt.where(TelemetryEvent.session_id == session_id)
+    return list(db.scalars(stmt))

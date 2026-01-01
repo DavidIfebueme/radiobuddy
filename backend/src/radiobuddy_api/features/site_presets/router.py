@@ -21,12 +21,17 @@ from radiobuddy_api.features.site_presets.service import (
     upsert_room_exposure_protocol,
 )
 from radiobuddy_api.platform.db.session import get_db
+from radiobuddy_api.platform.security import require_admin_api_key
 
 router = APIRouter(prefix="/sites", tags=["site_presets"])
 
 
 @router.post("", response_model=SiteOut, responses={503: {"model": ErrorResponse}})
-def create_site_endpoint(payload: SiteCreate, db: Session = Depends(get_db)) -> SiteOut:
+def create_site_endpoint(
+    payload: SiteCreate,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin_api_key),
+) -> SiteOut:
     site = create_site(db, site_id=payload.site_id, name=payload.name)
     return SiteOut(site_id=site.site_id, name=site.name, created_at=site.created_at)
 
@@ -47,6 +52,7 @@ def create_room_endpoint(
     site_id: str,
     payload: RoomCreate,
     db: Session = Depends(get_db),
+    _: None = Depends(require_admin_api_key),
 ) -> RoomOut:
     room = create_room(db, site_id=site_id, room_id=payload.room_id, name=payload.name)
     return RoomOut(
@@ -81,6 +87,7 @@ def upsert_exposure_protocol_endpoint(
     procedure_id: str,
     payload: ExposureProtocolUpsertIn,
     db: Session = Depends(get_db),
+    _: None = Depends(require_admin_api_key),
 ) -> ExposureProtocolOut:
     protocol = upsert_room_exposure_protocol(
         db,

@@ -95,6 +95,27 @@ class TelemetryEventAccepted(BaseModel):
     event_id: UUID
 
 
+class TelemetryEventOut(BaseModel):
+    event_id: UUID
+    timestamp: datetime
+    schema_version: str
+    event_type: TelemetryEventType
+    procedure_id: str
+
+    procedure_version: str | None = None
+    session_id: UUID | None = None
+    stage_id: str | None = None
+
+    device: dict[str, Any] | None = None
+    metrics: dict[str, Any] | None = None
+    prompt: dict[str, Any] | None = None
+    habitus: dict[str, Any] | None = None
+    exposure: dict[str, Any] | None = None
+    performance: dict[str, Any] | None = None
+
+    created_at: datetime
+
+
 class ErrorResponse(BaseModel):
     error: str
     detail: Any | None = None

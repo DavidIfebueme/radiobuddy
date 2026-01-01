@@ -17,12 +17,20 @@ def test_unified_exposure_protocol_prefers_db() -> None:
 
     client = TestClient(app)
 
-    resp = client.post("/sites", json={"site_id": site_id, "name": "Test Site"})
+    settings.admin_api_key = "test_admin_key"
+    headers = {"x-api-key": settings.admin_api_key}
+
+    resp = client.post(
+        "/sites",
+        json={"site_id": site_id, "name": "Test Site"},
+        headers=headers,
+    )
     assert resp.status_code == 200
 
     resp = client.post(
         f"/sites/{site_id}/rooms",
         json={"room_id": room_id, "name": "Room"},
+        headers=headers,
     )
     assert resp.status_code == 200
 
@@ -44,6 +52,7 @@ def test_unified_exposure_protocol_prefers_db() -> None:
     resp = client.put(
         f"/sites/{site_id}/rooms/{room_id}/exposure-protocols/{procedure_id}",
         json=payload,
+        headers=headers,
     )
     assert resp.status_code == 200
 
