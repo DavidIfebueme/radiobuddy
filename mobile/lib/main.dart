@@ -193,7 +193,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   }
 
   Future<void> _loadConfigs() async {
-    await _setStatus(_status, 'Loading configs');
+    await _setStatus(GuidanceStatus.idle, 'Loading configs');
     try {
       final rules = await _api.fetchChestPaRules();
       final protocol = await _api.fetchChestPaExposureProtocol();
@@ -208,7 +208,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
           stageId: 'configs_loaded',
         ).catchError((_) {}),
       );
-      await _setStatus(_status, 'Configs loaded');
+      await _setStatus(GuidanceStatus.ready, 'Configs loaded');
     } catch (e) {
       unawaited(
         _api.postTelemetryEvent(
@@ -341,6 +341,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   Widget build(BuildContext context) {
     final apiBaseUrl = _api.baseUrl;
     final currentStep = (_status == GuidanceStatus.running) ? _steps[_stepIndex] : null;
+    final configsLoaded = _procedureRules != null && _exposureProtocol != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -369,7 +370,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
                     child: const Text('Init camera'),
                   ),
                   FilledButton(
-                    onPressed: _cameraReady ? _startGuidance : null,
+                    onPressed:
+                        (configsLoaded && _status != GuidanceStatus.running) ? _startGuidance : null,
                     child: const Text('Start'),
                   ),
                   FilledButton(
