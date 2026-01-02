@@ -148,7 +148,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
 
   GuidanceStatus _status = GuidanceStatus.idle;
   String _statusText = 'Idle';
-  int _stepIndex = 0;
+  int _stageIndex = 0;
 
   CameraController? _camera;
   bool _cameraReady = false;
@@ -156,17 +156,79 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   Map<String, Object?>? _procedureRules;
   Map<String, Object?>? _exposureProtocol;
 
+  List<Map<String, Object?>> _stages = const [];
+
   late final RadiobuddyApi _api;
 
   String? _sessionId;
 
-  final List<String> _steps = const [
-    'Confirm patient is erect and centered.',
-    'Set SID and align central ray to T7.',
-    'Ensure scapulae are rotated out of lung fields.',
-    'Collimate to lung fields and check rotation.',
-    'Instruct deep inspiration and expose.',
+  static const List<Map<String, Object?>> _fallbackStages = [
+    {
+      'stage_id': 'acquire_view',
+      'stage_name': 'Acquire View',
+      'description': 'Get the full torso in frame and centered.',
+    },
+    {
+      'stage_id': 'coarse',
+      'stage_name': 'Coarse Coaching',
+      'description': 'Fix the biggest positioning issues first.',
+    },
+    {
+      'stage_id': 'fine',
+      'stage_name': 'Fine Coaching',
+      'description': 'Make micro-adjustments and stabilize.',
+    },
+    {
+      'stage_id': 'ready',
+      'stage_name': 'Ready',
+      'description': 'Positioning looks good. Hold still.',
+    },
   ];
+
+  List<Map<String, Object?>> _extractStages(Map<String, Object?> rules) {
+    final rawStages = rules['stages'];
+    if (rawStages is! List) {
+      return List<Map<String, Object?>>.from(_fallbackStages);
+    }
+
+    final List<Map<String, Object?>> stages = [];
+    for (final item in rawStages) {
+      if (item is Map) {
+        final stageId = item['stage_id'];
+        final stageName = item['stage_name'];
+        if (stageId is String && stageName is String) {
+          stages.add(item.cast<String, Object?>());
+        }
+      }
+    }
+
+    if (stages.isEmpty) {
+      return List<Map<String, Object?>>.from(_fallbackStages);
+    }
+
+    return stages;
+  }
+
+  String _stageIdAt(int index) {
+    final stage = _stages[index];
+    final stageId = stage['stage_id'];
+    return stageId is String ? stageId : 'stage_${index + 1}';
+  }
+
+  String _stageTitleAt(int index) {
+    final stage = _stages[index];
+    final stageName = stage['stage_name'];
+    return stageName is String ? stageName : 'Stage ${index + 1}';
+  }
+
+  String _stageDescriptionAt(int index) {
+    final stage = _stages[index];
+    final description = stage['description'];
+    if (description is String && description.trim().isNotEmpty) {
+      return description;
+    }
+    return _stageTitleAt(index);
+  }
 
   @override
   void initState() {
@@ -215,6 +277,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       setState(() {
         _procedureRules = rules;
         _exposureProtocol = protocol;
+        _stages = _extractStages(rules);
       });
       unawaited(
         _api.postTelemetryEvent(
@@ -274,7 +337,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   Future<void> _startGuidance() async {
     final sessionId = _uuid.v4();
     _sessionId = sessionId;
-    _stepIndex = 0;
+    _stageIndex = 0;
     await _setStatus(GuidanceStatus.running, 'Guidance running');
     unawaited(
       _api.postTelemetryEvent(
@@ -284,15 +347,22 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         stageId: 'start',
       ).catchError((_) {}),
     );
-    await _speak(_steps[_stepIndex]);
+    if (_stages.isEmpty) {
+      setState(() {
+        _stages = List<Map<String, Object?>>.from(_fallbackStages);
+      });
+    }
+
+    final stageId = _stageIdAt(_stageIndex);
+    await _speak(_stageDescriptionAt(_stageIndex));
     unawaited(
       _api.postTelemetryEvent(
         eventType: 'prompt_emitted',
         procedureId: 'chest_pa',
         sessionId: sessionId,
-        stageId: 'step_1',
+        stageId: stageId,
         prompt: {
-          'prompt_id': 'step_1',
+          'prompt_id': stageId,
           'spoken': true,
         },
       ).catchError((_) {}),
@@ -305,7 +375,13 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     }
 
     final sessionId = _sessionId;
-    if (_stepIndex >= _steps.length - 1) {
+    if (_stages.isEmpty) {
+      setState(() {
+        _stages = List<Map<String, Object?>>.from(_fallbackStages);
+      });
+    }
+
+    if (_stageIndex >= _stages.length - 1) {
       await _setStatus(GuidanceStatus.ready, 'Guidance complete');
       await _speak('Guidance complete');
       unawaited(
@@ -319,18 +395,19 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       _sessionId = null;
       return;
     }
-    _stepIndex += 1;
+    _stageIndex += 1;
     setState(() {});
-    await _speak(_steps[_stepIndex]);
+    final stageId = _stageIdAt(_stageIndex);
+    await _speak(_stageDescriptionAt(_stageIndex));
 
     unawaited(
       _api.postTelemetryEvent(
         eventType: 'prompt_emitted',
         procedureId: 'chest_pa',
         sessionId: sessionId,
-        stageId: 'step_${_stepIndex + 1}',
+        stageId: stageId,
         prompt: {
-          'prompt_id': 'step_${_stepIndex + 1}',
+          'prompt_id': stageId,
           'spoken': true,
         },
       ).catchError((_) {}),
@@ -359,7 +436,9 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   @override
   Widget build(BuildContext context) {
     final apiBaseUrl = _api.baseUrl;
-    final currentStep = (_status == GuidanceStatus.running) ? _steps[_stepIndex] : null;
+    final currentStageText = (_status == GuidanceStatus.running && _stages.isNotEmpty)
+        ? _stageDescriptionAt(_stageIndex)
+        : null;
     final configsLoaded = _procedureRules != null && _exposureProtocol != null;
 
     return Scaffold(
@@ -405,7 +484,10 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
               ),
               const SizedBox(height: 10),
               Text('Status: $_statusText'),
-              if (currentStep != null) Text('Step ${_stepIndex + 1}/${_steps.length}: $currentStep'),
+              if (currentStageText != null)
+                Text(
+                  'Stage ${_stageIndex + 1}/${_stages.length}: ${_stageTitleAt(_stageIndex)} — $currentStageText',
+                ),
               const SizedBox(height: 10),
               Expanded(
                 child: Container(
