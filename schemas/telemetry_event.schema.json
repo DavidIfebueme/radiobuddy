@@ -47,7 +47,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "platform": { "type": "string", "enum": ["android", "ios"] },
+        "platform": { "type": "string", "enum": ["android", "ios", "linux", "macos", "windows", "web", "unknown"] },
         "model": { "type": "string" },
         "app_version": { "type": "string" }
       }

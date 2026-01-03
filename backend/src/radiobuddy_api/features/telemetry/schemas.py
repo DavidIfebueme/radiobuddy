@@ -19,7 +19,7 @@ TelemetryEventType = Literal[
 
 
 class TelemetryDevice(BaseModel):
-    platform: Literal["android", "ios"] | None = None
+    platform: Literal["android", "ios", "linux", "macos", "windows", "web", "unknown"] | None = None
     model: str | None = None
     app_version: str | None = None
 

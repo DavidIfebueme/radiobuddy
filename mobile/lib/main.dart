@@ -1,12 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
+import 'package:flutter_lite_camera/flutter_lite_camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
+
+import 'package:radiobuddy/exposure_selector.dart' as exposure;
+
+import 'platform/platform.dart' as rb_platform;
 
 String _computeDefaultApiBaseUrl() {
   if (kIsWeb) {
@@ -107,7 +113,7 @@ class RadiobuddyApi {
     }
 
     payload['device'] = {
-      'platform': defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android',
+      'platform': _platformName(),
     };
 
     if (prompt != null) {
@@ -130,6 +136,21 @@ class RadiobuddyApi {
       throw Exception('HTTP ${response.statusCode}');
     }
   }
+
+  static String _platformName() {
+    if (kIsWeb) {
+      return 'web';
+    }
+
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => 'android',
+      TargetPlatform.iOS => 'ios',
+      TargetPlatform.linux => 'linux',
+      TargetPlatform.macOS => 'macos',
+      TargetPlatform.windows => 'windows',
+      _ => 'unknown',
+    };
+  }
 }
 
 class ChestPaGuidanceScreen extends StatefulWidget {
@@ -141,20 +162,38 @@ class ChestPaGuidanceScreen extends StatefulWidget {
 
 class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   final _tts = FlutterTts();
+  final _linuxCamera = FlutterLiteCamera();
 
   final _uuid = const Uuid();
 
   late final bool _ttsSupported;
 
+  bool _ttsMuted = false;
+  DateTime? _lastSpokenAt;
+  String? _lastSpokenText;
+
   GuidanceStatus _status = GuidanceStatus.idle;
   String _statusText = 'Idle';
   int _stageIndex = 0;
+  bool _guidanceComplete = false;
 
   CameraController? _camera;
   bool _cameraReady = false;
 
+  bool _linuxCameraReady = false;
+  Timer? _linuxCaptureTimer;
+  ui.Image? _linuxFrame;
+  int _linuxFrameWidth = 0;
+  int _linuxFrameHeight = 0;
+
   Map<String, Object?>? _procedureRules;
   Map<String, Object?>? _exposureProtocol;
+
+  String _sizeClass = 'average';
+  bool _grid = true;
+  int _sidCm = 180;
+
+  Map<String, Object?>? _selectedExposure;
 
   List<Map<String, Object?>> _stages = const [];
 
@@ -184,6 +223,38 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       'description': 'Positioning looks good. Hold still.',
     },
   ];
+
+  static const String _projectionId = 'chest_pa_erect';
+
+  String? _stringAt(Map<String, Object?> map, String key) {
+    final value = map[key];
+    return value is String ? value : null;
+  }
+
+  num? _numAt(Map<String, Object?> map, String key) {
+    final value = map[key];
+    return value is num ? value : null;
+  }
+
+  void _recomputeExposureSelection() {
+    final protocol = _exposureProtocol;
+    if (protocol == null) {
+      setState(() {
+        _selectedExposure = null;
+      });
+      return;
+    }
+    final selected = exposure.selectExposureFromProtocol(
+      protocol,
+      projectionId: _projectionId,
+      sizeClass: _sizeClass,
+      grid: _grid,
+      sidCm: _sidCm,
+    );
+    setState(() {
+      _selectedExposure = selected;
+    });
+  }
 
   List<Map<String, Object?>> _extractStages(Map<String, Object?> rules) {
     final rawStages = rules['stages'];
@@ -245,6 +316,10 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
 
   @override
   void dispose() {
+    _linuxCaptureTimer?.cancel();
+    if (rb_platform.isLinux) {
+      _linuxCamera.release().catchError((_) {});
+    }
     _camera?.dispose();
     if (_ttsSupported) {
       _tts.stop().catchError((_) {});
@@ -259,14 +334,45 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     });
   }
 
-  Future<void> _speak(String text) async {
-    if (!_ttsSupported) {
-      return;
+  Future<bool> _speak(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return false;
     }
+
+    if (_ttsMuted) {
+      return false;
+    }
+
+    final now = DateTime.now();
+    final last = _lastSpokenAt;
+    const cooldown = Duration(seconds: 3);
+    if (last != null && now.difference(last) < cooldown) {
+      return false;
+    }
+    if (_lastSpokenText == trimmed && last != null && now.difference(last) < const Duration(seconds: 10)) {
+      return false;
+    }
+
+    if (!_ttsSupported) {
+      if (rb_platform.isLinux) {
+        await rb_platform.speakSystem(trimmed);
+        _lastSpokenAt = now;
+        _lastSpokenText = trimmed;
+        return true;
+      }
+      return false;
+    }
+
     try {
       await _tts.stop();
-      await _tts.speak(text);
-    } catch (_) {}
+      await _tts.speak(trimmed);
+      _lastSpokenAt = now;
+      _lastSpokenText = trimmed;
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _loadConfigs() async {
@@ -279,6 +385,17 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         _exposureProtocol = protocol;
         _stages = _extractStages(rules);
       });
+
+      final sidOptions = exposure
+          .sidOptionsFromProtocol(protocol, projectionId: _projectionId)
+          .toList()
+        ..sort();
+      if (!sidOptions.contains(_sidCm)) {
+        _sidCm = sidOptions.isNotEmpty ? sidOptions.first : _sidCm;
+      }
+
+      _recomputeExposureSelection();
+
       unawaited(
         _api.postTelemetryEvent(
           eventType: 'ready_state_entered',
@@ -300,15 +417,56 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   }
 
   Future<void> _initCamera() async {
-    if (kIsWeb || (defaultTargetPlatform != TargetPlatform.android && defaultTargetPlatform != TargetPlatform.iOS)) {
-      await _setStatus(
-        GuidanceStatus.error,
-        'Camera not supported on this platform',
-      );
+    await _setStatus(GuidanceStatus.loadingCamera, 'Initializing camera');
+
+    if (kIsWeb) {
+      await _setStatus(GuidanceStatus.error, 'Camera not supported on this platform');
       return;
     }
 
-    await _setStatus(GuidanceStatus.loadingCamera, 'Initializing camera');
+    if (rb_platform.isLinux) {
+      try {
+        final devices = await _linuxCamera.getDeviceList();
+        if (devices.isEmpty) {
+          await _setStatus(GuidanceStatus.error, 'No camera devices found');
+          return;
+        }
+
+        final opened = await _linuxCamera.open(0);
+        if (!opened) {
+          await _setStatus(GuidanceStatus.error, 'Failed to open camera');
+          return;
+        }
+
+        setState(() {
+          _linuxCameraReady = true;
+          _cameraReady = true;
+        });
+
+        _linuxCaptureTimer?.cancel();
+        _linuxCaptureTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
+          unawaited(_captureLinuxFrame());
+        });
+
+        unawaited(
+          _api.postTelemetryEvent(
+            eventType: 'ready_state_entered',
+            procedureId: 'chest_pa',
+            stageId: 'camera_ready',
+          ).catchError((_) {}),
+        );
+        await _setStatus(GuidanceStatus.ready, 'Camera ready');
+      } catch (e) {
+        await _setStatus(GuidanceStatus.error, 'Camera init failed: $e');
+      }
+      return;
+    }
+
+    if (defaultTargetPlatform != TargetPlatform.android && defaultTargetPlatform != TargetPlatform.iOS) {
+      await _setStatus(GuidanceStatus.error, 'Camera not supported on this platform');
+      return;
+    }
+
     try {
       final cameras = await availableCameras();
       final selected = cameras.firstWhere(
@@ -334,10 +492,59 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     }
   }
 
+  Future<void> _captureLinuxFrame() async {
+    if (!rb_platform.isLinux || !_linuxCameraReady) {
+      return;
+    }
+
+    try {
+      final frame = await _linuxCamera.captureFrame();
+      final width = frame['width'];
+      final height = frame['height'];
+      final data = frame['data'];
+
+      if (width is! int || height is! int || data is! Uint8List) {
+        return;
+      }
+
+      final rgba = Uint8List(width * height * 4);
+      for (var i = 0; i < width * height; i++) {
+        final r = data[i * 3];
+        final g = data[i * 3 + 1];
+        final b = data[i * 3 + 2];
+        rgba[i * 4] = b;
+        rgba[i * 4 + 1] = g;
+        rgba[i * 4 + 2] = r;
+        rgba[i * 4 + 3] = 255;
+      }
+
+      final completer = Completer<ui.Image>();
+      ui.decodeImageFromPixels(
+        rgba,
+        width,
+        height,
+        ui.PixelFormat.rgba8888,
+        completer.complete,
+      );
+      final image = await completer.future;
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _linuxFrame?.dispose();
+        _linuxFrame = image;
+        _linuxFrameWidth = width;
+        _linuxFrameHeight = height;
+      });
+    } catch (_) {}
+  }
+
   Future<void> _startGuidance() async {
     final sessionId = _uuid.v4();
     _sessionId = sessionId;
     _stageIndex = 0;
+    _guidanceComplete = false;
     await _setStatus(GuidanceStatus.running, 'Guidance running');
     unawaited(
       _api.postTelemetryEvent(
@@ -354,7 +561,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     }
 
     final stageId = _stageIdAt(_stageIndex);
-    await _speak(_stageDescriptionAt(_stageIndex));
+    final spoken = await _speak(_stageDescriptionAt(_stageIndex));
     unawaited(
       _api.postTelemetryEvent(
         eventType: 'prompt_emitted',
@@ -363,7 +570,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         stageId: stageId,
         prompt: {
           'prompt_id': stageId,
-          'spoken': true,
+          'spoken': spoken,
         },
       ).catchError((_) {}),
     );
@@ -381,24 +588,10 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       });
     }
 
-    if (_stageIndex >= _stages.length - 1) {
-      await _setStatus(GuidanceStatus.ready, 'Guidance complete');
-      await _speak('Guidance complete');
-      unawaited(
-        _api.postTelemetryEvent(
-          eventType: 'session_end',
-          procedureId: 'chest_pa',
-          sessionId: sessionId,
-          stageId: 'complete',
-        ).catchError((_) {}),
-      );
-      _sessionId = null;
-      return;
-    }
     _stageIndex += 1;
     setState(() {});
     final stageId = _stageIdAt(_stageIndex);
-    await _speak(_stageDescriptionAt(_stageIndex));
+    final spoken = await _speak(_stageDescriptionAt(_stageIndex));
 
     unawaited(
       _api.postTelemetryEvent(
@@ -408,10 +601,26 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         stageId: stageId,
         prompt: {
           'prompt_id': stageId,
-          'spoken': true,
+          'spoken': spoken,
         },
       ).catchError((_) {}),
     );
+
+    if (_stageIndex >= _stages.length - 1) {
+      setState(() {
+        _guidanceComplete = true;
+      });
+      await _setStatus(GuidanceStatus.ready, 'Ready');
+      unawaited(
+        _api.postTelemetryEvent(
+          eventType: 'session_end',
+          procedureId: 'chest_pa',
+          sessionId: sessionId,
+          stageId: 'ready',
+        ).catchError((_) {}),
+      );
+      _sessionId = null;
+    }
   }
 
   Future<void> _stopGuidance() async {
@@ -431,6 +640,9 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       ).catchError((_) {}),
     );
     _sessionId = null;
+    setState(() {
+      _guidanceComplete = false;
+    });
   }
 
   @override
@@ -440,6 +652,20 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         ? _stageDescriptionAt(_stageIndex)
         : null;
     final configsLoaded = _procedureRules != null && _exposureProtocol != null;
+    final requiresCameraForStart = !kIsWeb && (rb_platform.isAndroid || rb_platform.isIOS);
+    final showManualChecklist = !configsLoaded || _status == GuidanceStatus.error;
+
+    final exposureProtocol = _exposureProtocol;
+    final exposureName = exposureProtocol != null ? _stringAt(exposureProtocol, 'protocol_name') : null;
+    final exposureAssumptions = exposureProtocol != null && exposureProtocol['assumptions'] is List
+      ? (exposureProtocol['assumptions'] as List).whereType<String>().toList(growable: false)
+      : const <String>[];
+    final sidOptions = exposureProtocol != null
+      ? (exposure.sidOptionsFromProtocol(exposureProtocol, projectionId: _projectionId).toList()..sort())
+      : const <int>[];
+    final selectedKvp = _selectedExposure != null ? _numAt(_selectedExposure!, 'kvp') : null;
+    final selectedMas = _selectedExposure != null ? _numAt(_selectedExposure!, 'mas') : null;
+    final selectedNotes = _selectedExposure != null ? _stringAt(_selectedExposure!, 'notes') : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -448,8 +674,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: ListView(
             children: [
               Text('Procedure: Chest PA', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 6),
@@ -469,7 +694,9 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
                   ),
                   FilledButton(
                     onPressed:
-                        (configsLoaded && _status != GuidanceStatus.running) ? _startGuidance : null,
+                        (configsLoaded && _status != GuidanceStatus.running && (!requiresCameraForStart || _cameraReady))
+                            ? _startGuidance
+                            : null,
                     child: const Text('Start'),
                   ),
                   FilledButton(
@@ -480,6 +707,23 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
                     onPressed: (_status == GuidanceStatus.running) ? _stopGuidance : null,
                     child: const Text('Stop'),
                   ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Mute'),
+                      Switch(
+                        value: _ttsMuted,
+                        onChanged: (value) {
+                          setState(() {
+                            _ttsMuted = value;
+                          });
+                          if (value && _ttsSupported) {
+                            _tts.stop().catchError((_) {});
+                          }
+                        },
+                      ),
+                    ],
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -488,8 +732,165 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
                 Text(
                   'Stage ${_stageIndex + 1}/${_stages.length}: ${_stageTitleAt(_stageIndex)} — $currentStageText',
                 ),
+              if (showManualChecklist) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Theme.of(context).dividerColor),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Manual checklist:\n'
+                    '1) Full torso in frame\n'
+                    '2) Center patient to detector\n'
+                    '3) Reduce rotation/tilt\n'
+                    '4) Improve lighting / step back\n'
+                    '5) Shoulders rolled forward\n'
+                    '6) Chin up',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+              ],
+              if (_guidanceComplete) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Theme.of(context).colorScheme.primary),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Ready', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 6),
+                      if (selectedKvp != null && selectedMas != null)
+                        Text(
+                          '${selectedKvp.toString()} kVp / ${selectedMas.toString()} mAs',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        )
+                      else
+                        Text('No technique match', style: Theme.of(context).textTheme.titleLarge),
+                      if (selectedNotes != null && selectedNotes.trim().isNotEmpty)
+                        Text(selectedNotes, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 10),
-              Expanded(
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('Exposure', style: Theme.of(context).textTheme.titleMedium),
+                    if (exposureName != null) Text(exposureName, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 180,
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _sizeClass,
+                            items: const [
+                              DropdownMenuItem(value: 'small', child: Text('Small')),
+                              DropdownMenuItem(value: 'average', child: Text('Average')),
+                              DropdownMenuItem(value: 'large', child: Text('Large')),
+                            ],
+                            onChanged: configsLoaded
+                                ? (value) {
+                                    if (value == null) {
+                                      return;
+                                    }
+                                    setState(() {
+                                      _sizeClass = value;
+                                    });
+                                    _recomputeExposureSelection();
+                                  }
+                                : null,
+                            decoration: const InputDecoration(labelText: 'Size class'),
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Grid'),
+                            Switch(
+                              value: _grid,
+                              onChanged: configsLoaded
+                                  ? (value) {
+                                      setState(() {
+                                        _grid = value;
+                                      });
+                                      _recomputeExposureSelection();
+                                    }
+                                  : null,
+                            ),
+                          ],
+                        ),
+                        if (sidOptions.isNotEmpty)
+                          SizedBox(
+                            width: 140,
+                            child: DropdownButtonFormField<int>(
+                              initialValue: sidOptions.contains(_sidCm) ? _sidCm : sidOptions.first,
+                              items: [
+                                for (final sid in sidOptions)
+                                  DropdownMenuItem(value: sid, child: Text('${sid}cm')),
+                              ],
+                              onChanged: configsLoaded
+                                  ? (value) {
+                                      if (value == null) {
+                                        return;
+                                      }
+                                      setState(() {
+                                        _sidCm = value;
+                                      });
+                                      _recomputeExposureSelection();
+                                    }
+                                  : null,
+                              decoration: const InputDecoration(labelText: 'SID'),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (selectedKvp != null && selectedMas != null)
+                      Text(
+                        'Suggested starting technique: ${selectedKvp.toString()} kVp / ${selectedMas.toString()} mAs',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      )
+                    else
+                      const Text('Suggested starting technique: —'),
+                    if (selectedNotes != null && selectedNotes.trim().isNotEmpty)
+                      Text(selectedNotes, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    if (exposureAssumptions.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        exposureAssumptions.first,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Limitations: starting technique per protocol only. Follow local policy. No PHI. Do not rely on this tool for clinical judgment.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 320,
                 child: Container(
                   decoration: BoxDecoration(
                     border: Border.all(color: Theme.of(context).dividerColor),
@@ -499,7 +900,16 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
                     borderRadius: BorderRadius.circular(12),
                     child: _cameraReady && _camera != null
                         ? CameraPreview(_camera!)
-                        : const Center(child: Text('Camera preview')),
+                        : (_linuxFrame != null && _linuxFrameWidth > 0 && _linuxFrameHeight > 0)
+                            ? FittedBox(
+                                fit: BoxFit.contain,
+                                child: SizedBox(
+                                  width: _linuxFrameWidth.toDouble(),
+                                  height: _linuxFrameHeight.toDouble(),
+                                  child: RawImage(image: _linuxFrame),
+                                ),
+                              )
+                            : const Center(child: Text('Camera preview')),
                   ),
                 ),
               ),
