@@ -10,6 +10,9 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
+import 'package:radiobuddy/ai/guidance_engine.dart';
+import 'package:radiobuddy/ai/pose_estimator.dart';
+import 'package:radiobuddy/ai/pose_metrics.dart';
 import 'package:radiobuddy/exposure_selector.dart' as exposure;
 
 import 'platform/platform.dart' as rb_platform;
@@ -163,6 +166,7 @@ class ChestPaGuidanceScreen extends StatefulWidget {
 class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   final _tts = FlutterTts();
   final _linuxCamera = FlutterLiteCamera();
+  final _poseEstimator = createPoseEstimator();
 
   final _uuid = const Uuid();
 
@@ -176,6 +180,14 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   String _statusText = 'Idle';
   int _stageIndex = 0;
   bool _guidanceComplete = false;
+
+  GuidanceEngine? _guidanceEngine;
+  PoseMetrics? _latestMetrics;
+  Timer? _guidanceTimer;
+  String? _pendingPromptId;
+  DateTime? _pendingPromptSince;
+  String? _lastEmittedPromptId;
+  DateTime? _lastEmittedPromptAt;
 
   CameraController? _camera;
   bool _cameraReady = false;
@@ -256,6 +268,123 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     });
   }
 
+  void _resetPromptGates() {
+    _pendingPromptId = null;
+    _pendingPromptSince = null;
+    _lastEmittedPromptId = null;
+    _lastEmittedPromptAt = null;
+  }
+
+  void _startGuidanceLoop() {
+    _guidanceTimer?.cancel();
+    _guidanceTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
+      unawaited(_tickGuidanceLoop());
+    });
+  }
+
+  void _stopGuidanceLoop() {
+    _guidanceTimer?.cancel();
+    _guidanceTimer = null;
+  }
+
+  Future<void> _completeGuidance(String? sessionId) async {
+    setState(() {
+      _guidanceComplete = true;
+    });
+    _stopGuidanceLoop();
+    await _setStatus(GuidanceStatus.ready, 'Ready');
+    unawaited(
+      _api.postTelemetryEvent(
+        eventType: 'session_end',
+        procedureId: 'chest_pa',
+        sessionId: sessionId,
+        stageId: 'ready',
+      ).catchError((_) {}),
+    );
+    _sessionId = null;
+  }
+
+  Future<void> _tickGuidanceLoop() async {
+    if (_status != GuidanceStatus.running) {
+      return;
+    }
+
+    final engine = _guidanceEngine;
+    if (engine == null || _stages.isEmpty) {
+      return;
+    }
+
+    final metrics = _latestMetrics?.toMap();
+    if (metrics == null) {
+      return;
+    }
+
+    final stageId = _stageIdAt(_stageIndex);
+    final decision = engine.decide(stageId: stageId, metrics: metrics);
+    if (decision == null) {
+      return;
+    }
+
+    final now = DateTime.now();
+    if (_pendingPromptId != decision.prompt.id) {
+      _pendingPromptId = decision.prompt.id;
+      _pendingPromptSince = now;
+      return;
+    }
+
+    final pendingSince = _pendingPromptSince;
+    if (pendingSince == null || now.difference(pendingSince).inMilliseconds < decision.prompt.minPersistMs) {
+      return;
+    }
+
+    final lastAt = _lastEmittedPromptAt;
+    final withinCooldown =
+        lastAt != null && now.difference(lastAt).inMilliseconds < decision.prompt.cooldownMs;
+    if (withinCooldown && _lastEmittedPromptId == decision.prompt.id) {
+      return;
+    }
+
+    final spoken = await _speak(decision.prompt.tts);
+    await _setStatus(GuidanceStatus.running, decision.prompt.text);
+    _lastEmittedPromptId = decision.prompt.id;
+    _lastEmittedPromptAt = now;
+
+    final sessionId = _sessionId;
+    final metricsPayload = <String, num>{};
+    for (final entry in metrics.entries) {
+      metricsPayload[entry.key] = entry.value;
+    }
+
+    unawaited(
+      _api.postTelemetryEvent(
+        eventType: 'prompt_emitted',
+        procedureId: 'chest_pa',
+        sessionId: sessionId,
+        stageId: stageId,
+        prompt: {
+          'prompt_id': decision.prompt.id,
+          'rule_id': decision.ruleId,
+          'spoken': spoken,
+        },
+        metrics: metricsPayload,
+      ).catchError((_) {}),
+    );
+
+    if (!decision.isReadySignal) {
+      return;
+    }
+
+    _resetPromptGates();
+    if (_stageIndex < _stages.length - 1) {
+      setState(() {
+        _stageIndex += 1;
+      });
+      return;
+    }
+
+    await _completeGuidance(sessionId);
+  }
+
   List<Map<String, Object?>> _extractStages(Map<String, Object?> rules) {
     final rawStages = rules['stages'];
     if (rawStages is! List) {
@@ -316,6 +445,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
 
   @override
   void dispose() {
+    _guidanceTimer?.cancel();
+    _poseEstimator.stop().catchError((_) {});
     _linuxCaptureTimer?.cancel();
     if (rb_platform.isLinux) {
       _linuxCamera.release().catchError((_) {});
@@ -384,6 +515,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         _procedureRules = rules;
         _exposureProtocol = protocol;
         _stages = _extractStages(rules);
+        _guidanceEngine = GuidanceEngine.fromProcedureRules(rules);
       });
 
       final sidOptions = exposure
@@ -479,6 +611,30 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         _camera = controller;
         _cameraReady = true;
       });
+
+      await _poseEstimator.start(
+        controller: controller,
+        onMetrics: (metrics) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _latestMetrics = metrics;
+            _sizeClass = metrics.sizeClass;
+          });
+          _recomputeExposureSelection();
+          unawaited(
+            _api.postTelemetryEvent(
+              eventType: 'habitus_estimated',
+              procedureId: 'chest_pa',
+              sessionId: _sessionId,
+              stageId: _stages.isNotEmpty ? _stageIdAt(_stageIndex) : null,
+              metrics: metrics.toMap(),
+            ).catchError((_) {}),
+          );
+        },
+      );
+
       unawaited(
         _api.postTelemetryEvent(
           eventType: 'ready_state_entered',
@@ -545,7 +701,9 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     _sessionId = sessionId;
     _stageIndex = 0;
     _guidanceComplete = false;
+    _resetPromptGates();
     await _setStatus(GuidanceStatus.running, 'Guidance running');
+    _startGuidanceLoop();
     unawaited(
       _api.postTelemetryEvent(
         eventType: 'session_start',
@@ -560,20 +718,22 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       });
     }
 
-    final stageId = _stageIdAt(_stageIndex);
-    final spoken = await _speak(_stageDescriptionAt(_stageIndex));
-    unawaited(
-      _api.postTelemetryEvent(
-        eventType: 'prompt_emitted',
-        procedureId: 'chest_pa',
-        sessionId: sessionId,
-        stageId: stageId,
-        prompt: {
-          'prompt_id': stageId,
-          'spoken': spoken,
-        },
-      ).catchError((_) {}),
-    );
+    if (_guidanceEngine == null) {
+      final stageId = _stageIdAt(_stageIndex);
+      final spoken = await _speak(_stageDescriptionAt(_stageIndex));
+      unawaited(
+        _api.postTelemetryEvent(
+          eventType: 'prompt_emitted',
+          procedureId: 'chest_pa',
+          sessionId: sessionId,
+          stageId: stageId,
+          prompt: {
+            'prompt_id': stageId,
+            'spoken': spoken,
+          },
+        ).catchError((_) {}),
+      );
+    }
   }
 
   Future<void> _nextStep() async {
@@ -588,7 +748,13 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       });
     }
 
+    if (_stageIndex >= _stages.length - 1) {
+      await _completeGuidance(_sessionId);
+      return;
+    }
+
     _stageIndex += 1;
+    _resetPromptGates();
     setState(() {});
     final stageId = _stageIdAt(_stageIndex);
     final spoken = await _speak(_stageDescriptionAt(_stageIndex));
@@ -607,23 +773,12 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     );
 
     if (_stageIndex >= _stages.length - 1) {
-      setState(() {
-        _guidanceComplete = true;
-      });
-      await _setStatus(GuidanceStatus.ready, 'Ready');
-      unawaited(
-        _api.postTelemetryEvent(
-          eventType: 'session_end',
-          procedureId: 'chest_pa',
-          sessionId: sessionId,
-          stageId: 'ready',
-        ).catchError((_) {}),
-      );
-      _sessionId = null;
+      await _completeGuidance(sessionId);
     }
   }
 
   Future<void> _stopGuidance() async {
+    _stopGuidanceLoop();
     if (_ttsSupported) {
       try {
         await _tts.stop();
@@ -643,6 +798,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     setState(() {
       _guidanceComplete = false;
     });
+    _resetPromptGates();
   }
 
   @override
@@ -728,6 +884,13 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
               ),
               const SizedBox(height: 10),
               Text('Status: $_statusText'),
+              Text(
+                _poseEstimator.supported
+                    ? (_latestMetrics == null
+                        ? 'AI: waiting for pose metrics'
+                        : 'AI: pose ${(_latestMetrics!.poseConfidence * 100).toStringAsFixed(0)}%')
+                    : 'AI: on-device pose not supported on this platform',
+              ),
               if (currentStageText != null)
                 Text(
                   'Stage ${_stageIndex + 1}/${_stages.length}: ${_stageTitleAt(_stageIndex)} — $currentStageText',
