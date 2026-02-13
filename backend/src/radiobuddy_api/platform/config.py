@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     database_url: str | None = None
     admin_api_key: str | None = None
+    do_inference_enabled: bool = False
     do_model_access_key: str | None = None
     do_model_id: str = "llama3.3-70b-instruct"
     do_inference_timeout_seconds: float = 8.0

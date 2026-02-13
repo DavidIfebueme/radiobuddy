@@ -83,7 +83,7 @@ async def _do_inference_instruction(payload: AiAssistAnalyzeIn) -> str:
 
 async def analyze_position(payload: AiAssistAnalyzeIn) -> AiAssistAnalyzeOut:
     model = settings.do_model_id
-    if settings.do_model_access_key:
+    if settings.do_inference_enabled and settings.do_model_access_key:
         try:
             instruction = await _do_inference_instruction(payload)
             return AiAssistAnalyzeOut(instruction=instruction, source="do_inference", model=model)

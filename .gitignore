@@ -8,7 +8,7 @@ __pycache__/
 .uv/
 uv.lock
 
-
+DEPLOY*
 tasks.md
 planning/
 

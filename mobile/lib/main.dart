@@ -29,6 +29,15 @@ String _computeDefaultApiBaseUrl() {
   return 'http://127.0.0.1:8000';
 }
 
+bool _boolFromEnv(String key, {required bool defaultValue}) {
+  final raw = String.fromEnvironment(key, defaultValue: '');
+  if (raw.isEmpty) {
+    return defaultValue;
+  }
+  final normalized = raw.trim().toLowerCase();
+  return normalized == '1' || normalized == 'true' || normalized == 'yes' || normalized == 'on';
+}
+
 void main() {
   runApp(const RadioBuddyApp());
 }
@@ -204,6 +213,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   final _uuid = const Uuid();
 
   late final bool _ttsSupported;
+  late final bool _onDeviceAiEnabled;
+  late final bool _cloudAssistEnabled;
 
   bool _ttsMuted = false;
   DateTime? _lastSpokenAt;
@@ -316,6 +327,10 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     required String stageId,
     required Map<String, double> metrics,
   }) async {
+    if (!_cloudAssistEnabled) {
+      return;
+    }
+
     if (_cloudAssistBusy) {
       return;
     }
@@ -381,6 +396,10 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   }
 
   Future<void> _tickGuidanceLoop() async {
+    if (!_onDeviceAiEnabled) {
+      return;
+    }
+
     if (_status != GuidanceStatus.running) {
       return;
     }
@@ -521,6 +540,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     super.initState();
     final baseUrl = const String.fromEnvironment('API_BASE_URL', defaultValue: '');
     _api = RadiobuddyApi(baseUrl: baseUrl.trim().isEmpty ? _computeDefaultApiBaseUrl() : baseUrl);
+    _onDeviceAiEnabled = _boolFromEnv('AI_ON_DEVICE_ENABLED', defaultValue: true);
+    _cloudAssistEnabled = _boolFromEnv('AI_CLOUD_ASSIST_ENABLED', defaultValue: false);
 
     _ttsSupported = !kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.android ||
@@ -707,28 +728,30 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         _cameraReady = true;
       });
 
-      await _poseEstimator.start(
-        controller: controller,
-        onMetrics: (metrics) {
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _latestMetrics = metrics;
-            _sizeClass = metrics.sizeClass;
-          });
-          _recomputeExposureSelection();
-          unawaited(
-            _api.postTelemetryEvent(
-              eventType: 'habitus_estimated',
-              procedureId: 'chest_pa',
-              sessionId: _sessionId,
-              stageId: _stages.isNotEmpty ? _stageIdAt(_stageIndex) : null,
-              metrics: metrics.toMap(),
-            ).catchError((_) {}),
-          );
-        },
-      );
+      if (_onDeviceAiEnabled) {
+        await _poseEstimator.start(
+          controller: controller,
+          onMetrics: (metrics) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _latestMetrics = metrics;
+              _sizeClass = metrics.sizeClass;
+            });
+            _recomputeExposureSelection();
+            unawaited(
+              _api.postTelemetryEvent(
+                eventType: 'habitus_estimated',
+                procedureId: 'chest_pa',
+                sessionId: _sessionId,
+                stageId: _stages.isNotEmpty ? _stageIdAt(_stageIndex) : null,
+                metrics: metrics.toMap(),
+              ).catchError((_) {}),
+            );
+          },
+        );
+      }
 
       unawaited(
         _api.postTelemetryEvent(
@@ -801,7 +824,9 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     _cloudAssistSource = null;
     _lastCloudAssistAt = null;
     await _setStatus(GuidanceStatus.running, 'Guidance running');
-    _startGuidanceLoop();
+    if (_onDeviceAiEnabled) {
+      _startGuidanceLoop();
+    }
     unawaited(
       _api.postTelemetryEvent(
         eventType: 'session_start',
@@ -816,7 +841,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       });
     }
 
-    if (_guidanceEngine == null) {
+    if (!_onDeviceAiEnabled || _guidanceEngine == null) {
       final stageId = _stageIdAt(_stageIndex);
       final spoken = await _speak(_stageDescriptionAt(_stageIndex));
       unawaited(
@@ -985,13 +1010,20 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
               const SizedBox(height: 10),
               Text('Status: $_statusText'),
               Text(
-                _poseEstimator.supported
-                    ? (_latestMetrics == null
-                        ? 'AI: waiting for pose metrics'
-                        : 'AI: pose ${(_latestMetrics!.poseConfidence * 100).toStringAsFixed(0)}%')
-                    : 'AI: on-device pose not supported on this platform',
+                !_onDeviceAiEnabled
+                    ? 'AI: disabled by configuration'
+                    : (_poseEstimator.supported
+                        ? (_latestMetrics == null
+                            ? 'AI: waiting for pose metrics'
+                            : 'AI: pose ${(_latestMetrics!.poseConfidence * 100).toStringAsFixed(0)}%')
+                        : 'AI: on-device pose not supported on this platform'),
               ),
-              if (_cloudAssistInstruction != null)
+              Text(
+                _cloudAssistEnabled
+                    ? 'Cloud assist: enabled'
+                  : 'Cloud assist: disabled',
+              ),
+              if (_cloudAssistEnabled && _cloudAssistInstruction != null)
                 Text(
                   'Cloud assist (${_cloudAssistSource ?? 'unknown'}): $_cloudAssistInstruction',
                   maxLines: 2,

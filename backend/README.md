@@ -21,6 +21,9 @@
 - `RADIOBUDDY_DO_MODEL_ACCESS_KEY` (optional for `/ai/positioning/analyze`)
 	- DigitalOcean Gradient serverless inference model access key
 
+- `RADIOBUDDY_DO_INFERENCE_ENABLED` (optional, default `false`)
+	- Set to `true` to enable DigitalOcean inference calls
+
 - `RADIOBUDDY_DO_MODEL_ID` (optional, default `llama3.3-70b-instruct`)
 
 - `RADIOBUDDY_DO_INFERENCE_TIMEOUT_SECONDS` (optional, default `8.0`)
