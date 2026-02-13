@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from radiobuddy_api.features.ai_assist.router import router as ai_assist_router
 from radiobuddy_api.features.exposure_protocols.router import router as exposure_protocols_router
 from radiobuddy_api.features.health.router import router as health_router
 from radiobuddy_api.features.procedure_rules.router import router as procedure_rules_router
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)
+    app.include_router(ai_assist_router)
     app.include_router(procedure_rules_router)
     app.include_router(exposure_protocols_router)
     app.include_router(telemetry_router)
