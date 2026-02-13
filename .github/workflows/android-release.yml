@@ -1,0 +1,84 @@
+name: Android Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: Backend API base URL
+        required: true
+        default: https://example.com
+      ai_on_device_enabled:
+        description: Enable on-device AI
+        required: true
+        default: "true"
+      ai_cloud_assist_enabled:
+        description: Enable cloud assist
+        required: true
+        default: "false"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build release APK
+        env:
+          INPUT_API_BASE_URL: ${{ github.event.inputs.api_base_url }}
+          INPUT_AI_ON_DEVICE: ${{ github.event.inputs.ai_on_device_enabled }}
+          INPUT_AI_CLOUD: ${{ github.event.inputs.ai_cloud_assist_enabled }}
+          DEFAULT_API_BASE_URL: ${{ vars.API_BASE_URL }}
+          DEFAULT_AI_ON_DEVICE: ${{ vars.AI_ON_DEVICE_ENABLED }}
+          DEFAULT_AI_CLOUD: ${{ vars.AI_CLOUD_ASSIST_ENABLED }}
+        run: |
+          API_BASE_URL="${INPUT_API_BASE_URL:-$DEFAULT_API_BASE_URL}"
+          AI_ON_DEVICE_ENABLED="${INPUT_AI_ON_DEVICE:-${DEFAULT_AI_ON_DEVICE:-true}}"
+          AI_CLOUD_ASSIST_ENABLED="${INPUT_AI_CLOUD:-${DEFAULT_AI_CLOUD:-false}}"
+
+          if [ -z "$API_BASE_URL" ]; then
+            echo "API_BASE_URL is required. Set workflow input or repository variable API_BASE_URL."
+            exit 1
+          fi
+
+          flutter build apk --release \
+            --dart-define=API_BASE_URL="$API_BASE_URL" \
+            --dart-define=AI_ON_DEVICE_ENABLED="$AI_ON_DEVICE_ENABLED" \
+            --dart-define=AI_CLOUD_ASSIST_ENABLED="$AI_CLOUD_ASSIST_ENABLED"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Upload APK to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mobile/build/app/outputs/flutter-apk/app-release.apk
