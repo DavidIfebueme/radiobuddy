@@ -140,6 +140,39 @@ class RadiobuddyApi {
     }
   }
 
+  Future<Map<String, Object?>> analyzePositioning({
+    required String procedureId,
+    required String stageId,
+    required Map<String, double> metrics,
+  }) async {
+    final uri = Uri.parse(baseUrl).resolve('/ai/positioning/analyze');
+    final response = await http.post(
+      uri,
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+      },
+      body: jsonEncode({
+        'procedure_id': procedureId,
+        'stage_id': stageId,
+        'metrics': metrics,
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, Object?>) {
+      return decoded;
+    }
+    if (decoded is Map) {
+      return decoded.cast<String, Object?>();
+    }
+    throw Exception('Unexpected JSON');
+  }
+
   static String _platformName() {
     if (kIsWeb) {
       return 'web';
@@ -188,6 +221,10 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
   DateTime? _pendingPromptSince;
   String? _lastEmittedPromptId;
   DateTime? _lastEmittedPromptAt;
+  String? _cloudAssistInstruction;
+  String? _cloudAssistSource;
+  DateTime? _lastCloudAssistAt;
+  bool _cloudAssistBusy = false;
 
   CameraController? _camera;
   bool _cameraReady = false;
@@ -275,6 +312,45 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     _lastEmittedPromptAt = null;
   }
 
+  Future<void> _refreshCloudAssist({
+    required String stageId,
+    required Map<String, double> metrics,
+  }) async {
+    if (_cloudAssistBusy) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final last = _lastCloudAssistAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 3)) {
+      return;
+    }
+
+    _cloudAssistBusy = true;
+    try {
+      final result = await _api.analyzePositioning(
+        procedureId: 'chest_pa',
+        stageId: stageId,
+        metrics: metrics,
+      );
+
+      final instruction = result['instruction'];
+      final source = result['source'];
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _lastCloudAssistAt = DateTime.now();
+        _cloudAssistInstruction = instruction is String ? instruction : null;
+        _cloudAssistSource = source is String ? source : null;
+      });
+    } catch (_) {
+    } finally {
+      _cloudAssistBusy = false;
+    }
+  }
+
   void _startGuidanceLoop() {
     _guidanceTimer?.cancel();
     _guidanceTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
@@ -325,6 +401,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       return;
     }
 
+    unawaited(_refreshCloudAssist(stageId: stageId, metrics: metrics));
+
     final now = DateTime.now();
     if (_pendingPromptId != decision.prompt.id) {
       _pendingPromptId = decision.prompt.id;
@@ -344,8 +422,16 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       return;
     }
 
-    final spoken = await _speak(decision.prompt.tts);
-    await _setStatus(GuidanceStatus.running, decision.prompt.text);
+    final cloudInstruction = _cloudAssistInstruction;
+    final cloudSource = _cloudAssistSource;
+    final useCloudInstruction =
+      cloudInstruction != null && cloudInstruction.trim().isNotEmpty && cloudSource == 'do_inference';
+
+    final spokenText = useCloudInstruction ? cloudInstruction : decision.prompt.tts;
+    final shownText = useCloudInstruction ? cloudInstruction : decision.prompt.text;
+
+    final spoken = await _speak(spokenText);
+    await _setStatus(GuidanceStatus.running, shownText);
     _lastEmittedPromptId = decision.prompt.id;
     _lastEmittedPromptAt = now;
 
@@ -607,6 +693,7 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
       );
       final controller = CameraController(selected, ResolutionPreset.medium, enableAudio: false);
       await controller.initialize();
+      await _poseEstimator.stop();
       setState(() {
         _camera = controller;
         _cameraReady = true;
@@ -702,6 +789,9 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     _stageIndex = 0;
     _guidanceComplete = false;
     _resetPromptGates();
+    _cloudAssistInstruction = null;
+    _cloudAssistSource = null;
+    _lastCloudAssistAt = null;
     await _setStatus(GuidanceStatus.running, 'Guidance running');
     _startGuidanceLoop();
     unawaited(
@@ -797,6 +887,8 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
     _sessionId = null;
     setState(() {
       _guidanceComplete = false;
+      _cloudAssistInstruction = null;
+      _cloudAssistSource = null;
     });
     _resetPromptGates();
   }
@@ -891,6 +983,12 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
                         : 'AI: pose ${(_latestMetrics!.poseConfidence * 100).toStringAsFixed(0)}%')
                     : 'AI: on-device pose not supported on this platform',
               ),
+              if (_cloudAssistInstruction != null)
+                Text(
+                  'Cloud assist (${_cloudAssistSource ?? 'unknown'}): $_cloudAssistInstruction',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
               if (currentStageText != null)
                 Text(
                   'Stage ${_stageIndex + 1}/${_stages.length}: ${_stageTitleAt(_stageIndex)} — $currentStageText',
