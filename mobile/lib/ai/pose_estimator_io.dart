@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 import 'pose_estimator.dart';
@@ -21,9 +21,9 @@ class MlKitPoseEstimator implements PoseEstimator {
   final PoseDetector _detector;
 
   CameraController? _controller;
-  Timer? _timer;
   Pose? _previousPose;
   bool _busy = false;
+  bool _streaming = false;
 
   @override
   bool get supported => Platform.isAndroid || Platform.isIOS;
@@ -39,50 +39,104 @@ class MlKitPoseEstimator implements PoseEstimator {
     }
 
     _controller = controller;
-    _timer = Timer.periodic(const Duration(milliseconds: 700), (_) {
-      unawaited(_captureAndEstimate(onMetrics));
+    await controller.startImageStream((CameraImage image) {
+      unawaited(_processFrame(image, onMetrics));
     });
+    _streaming = true;
   }
 
   @override
   Future<void> stop() async {
-    _timer?.cancel();
-    _timer = null;
+    if (_streaming) {
+      final controller = _controller;
+      if (controller != null && controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    }
+    _streaming = false;
     _controller = null;
     _previousPose = null;
   }
 
-  Future<void> _captureAndEstimate(PoseMetricsCallback onMetrics) async {
+  Future<void> _processFrame(CameraImage image, PoseMetricsCallback onMetrics) async {
     if (_busy) {
       return;
     }
 
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) {
+    if (_controller == null) {
       return;
     }
 
     _busy = true;
     try {
-      final image = await controller.takePicture();
-      final inputImage = InputImage.fromFilePath(image.path);
+      final inputImage = _toInputImage(image);
+      if (inputImage == null) {
+        return;
+      }
       final poses = await _detector.processImage(inputImage);
       if (poses.isEmpty) {
         return;
       }
 
       final currentPose = poses.first;
-      final metrics = _buildMetrics(currentPose, controller.value.previewSize);
+      final metrics = _buildMetrics(currentPose, Size(image.width.toDouble(), image.height.toDouble()));
       _previousPose = currentPose;
       onMetrics(metrics);
-
-      final imageFile = File(image.path);
-      if (await imageFile.exists()) {
-        await imageFile.delete();
-      }
     } catch (_) {
     } finally {
       _busy = false;
+    }
+  }
+
+  InputImage? _toInputImage(CameraImage image) {
+    final controller = _controller;
+    if (controller == null) {
+      return null;
+    }
+
+    final rawFormat = image.format.raw;
+    final format = InputImageFormatValue.fromRawValue(rawFormat);
+    if (format == null) {
+      return null;
+    }
+
+    final rotation = _inputImageRotation(controller.description.sensorOrientation);
+    if (rotation == null) {
+      return null;
+    }
+
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    final bytes = allBytes.done().buffer.asUint8List();
+
+    if (image.planes.isEmpty) {
+      return null;
+    }
+
+    final metadata = InputImageMetadata(
+      size: Size(image.width.toDouble(), image.height.toDouble()),
+      rotation: rotation,
+      format: format,
+      bytesPerRow: image.planes.first.bytesPerRow,
+    );
+
+    return InputImage.fromBytes(bytes: bytes, metadata: metadata);
+  }
+
+  InputImageRotation? _inputImageRotation(int rotation) {
+    switch (rotation) {
+      case 0:
+        return InputImageRotation.rotation0deg;
+      case 90:
+        return InputImageRotation.rotation90deg;
+      case 180:
+        return InputImageRotation.rotation180deg;
+      case 270:
+        return InputImageRotation.rotation270deg;
+      default:
+        return null;
     }
   }
 

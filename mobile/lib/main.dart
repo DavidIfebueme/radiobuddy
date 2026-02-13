@@ -691,7 +691,15 @@ class _ChestPaGuidanceScreenState extends State<ChestPaGuidanceScreen> {
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
-      final controller = CameraController(selected, ResolutionPreset.medium, enableAudio: false);
+        final ImageFormatGroup? imageFormatGroup = rb_platform.isAndroid
+          ? ImageFormatGroup.nv21
+          : (rb_platform.isIOS ? ImageFormatGroup.bgra8888 : null);
+      final controller = CameraController(
+        selected,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: imageFormatGroup,
+      );
       await controller.initialize();
       await _poseEstimator.stop();
       setState(() {
